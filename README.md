@@ -12,7 +12,7 @@ Now, I can't promise that all of the code here is pristine; in fact, I know that
 
 I supposed in one sense you can sort of think of this as a curriculum vitae (I spell it out here to avoid confusion with other 'cv' abbreviations, such as 'computer vision' or 'curried vegetables'), but (and perhaps egocentrically) I don't think that it comes close to encapsulating all of the things that I've done and experienced. I do think, however, that you'll at least be able to get a sense of what sorts of things in the computer science world excite me and how excited I am by computer science. 
 
-**Disclaimer**: I've taken special care to try to minimize the amount of potential "solutions" I'm giving away in this cookbook, mostly by rewriting all of any skeleton/starter code in my own fashion (whether that's a blessing or a curse, that's up to you). If you think some things are violating the UC Berkeley educational code of conduct, please feel free to reach out to me over [email](bri25yu@berkeley.edu) or visit my [personal website](bri25yu.github.io). 
+**Disclaimer**: I've taken special care to try to minimize the amount of potential "solutions" I'm giving away in this cookbook, mostly by rewriting all of any skeleton/starter code in my own fashion (whether that's a blessing or a curse, that's up to you). If you think some things are violating the UC Berkeley educational code of conduct, please feel free to reach out to me over [email](mailto:bri25yu@berkeley.edu) or visit my [personal website](https://bri25yu.github.io). 
 
 Cheers, and happy coding!
 
