@@ -15,4 +15,5 @@ I supposed in one sense you can sort of think of this as a curriculum vitae (I s
 **Disclaimer**: I've taken special care to try to minimize the amount of potential "solutions" I'm giving away in this cookbook, mostly by rewriting all of any skeleton/starter code in my own fashion (whether that's a blessing or a curse, that's up to you). If you think some things are violating the UC Berkeley educational code of conduct, please feel free to reach out to me over [email](bri25yu@berkeley.edu) or visit my [personal website](bri25yu.github.io). 
 
 Cheers, and happy coding!
+
 Brian
