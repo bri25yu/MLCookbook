@@ -3,6 +3,7 @@
 """
 
 import random
+from bisect import bisect_left, insort
 
 class TreeNode:
     
@@ -595,6 +596,48 @@ class Heap:
             if self._vals[i]._val == item:
                 return i
         return -1
+
+class PriorityQueue:
+    """
+    Only works with hashable and comparable values.
+
+    >>> pq = PriorityQueue()
+    >>> pq.add(2, 2)
+    >>> pq.add(1, 1)
+    >>> pq.add(3, 3)
+    >>> [pq.pop() for _ in range(3)]
+    [1, 2, 3]
+    >>> len(pq.vals)
+    0
+    >>> import random
+    >>> random.seed(1234)
+    >>> l = list(range(10000))
+    >>> l_sorted = l.copy()
+    >>> random.shuffle(l)
+    >>> for val in l:
+    ...     pq.add(val, val + 1)
+    ...
+    >>> len(pq.vals)
+    10000
+    >>> [pq.pop() for _ in range(len(l_sorted))] == l_sorted
+    True
+
+    """
+
+    def __init__(self):
+        self.vals, self.mappings = [], dict()
+
+    def add(self, val, priority):
+        if val in self.mappings: self.vals.pop(bisect_left(self.vals, [self.mappings[val], val]))
+        self.mappings[val] = priority
+        insort(self.vals, [priority, val])
+
+    def pop(self):
+        if self.vals:
+            val = self.vals.pop(0)[1]
+            self.mappings.pop(val)
+            return val
+        raise IndexError('Popping from an empty Queue')
 
 class ImplicitHeap(Heap):
     pass
