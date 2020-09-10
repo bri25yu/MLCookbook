@@ -6,6 +6,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
+import mpl_toolkits.mplot3d.axes3d as p3
 from matplotlib.colors import LogNorm
 from matplotlib import animation
 from scipy.optimize import minimize, OptimizeResult
@@ -18,6 +19,7 @@ class Visualization:
         plt.tight_layout()
         plt.savefig(save_name)
         if show: plt.show()
+
 
 class Optimization:
     """
@@ -258,3 +260,116 @@ class Optimization:
             return line, point
         return animate3d
 
+
+class AnimateXYZ:
+    DEFAULT_INTERVAL = 50  # in ms
+    COLORS = ['red', 'green', 'blue']
+
+    def __init__(self, lines_data: list, arrows_data: list=None):
+        """
+        Parameters
+        ----------
+        lines_data: list
+            List of n lines, where each line is an np.array of shape (3, steps).
+        arrows_data: list
+            List of n arrow sets. Each arrow set contains 3 directions. Each arrow direction is
+            an np.array of shape (3, steps).
+
+        """
+        self.lines_data, self.arrows_data = lines_data, arrows_data
+        self.num_frames = self.lines_data[0].shape[1]
+        self.fig, self.ax = self.create_3d()
+        self.plot_lines()
+        self.plot_arrows()
+        self.create_animation()
+
+    @staticmethod
+    def update_lines_and_arrows(t, lines_data, lines, arrows_data, arrows):
+        objects_to_plot = AnimateXYZ.update_lines(t, lines_data, lines)
+        if arrows_data:
+            objects_to_plot.extend(AnimateXYZ.update_arrows(t, lines_data, arrows_data, arrows))
+        return objects_to_plot
+
+    @staticmethod
+    def update_lines(t, lines_data, lines):
+        for line_data, line in zip(lines_data, lines):
+            line.set_data(line_data[0:2, :t])
+            line.set_3d_properties(line_data[2, :t])
+        return lines
+
+    @staticmethod
+    def arrows_data_to_segments(X, Y, Z, u, v, w):
+        """
+        From https://stackoverflow.com/questions/48911643/set-uvc-equivilent-for-a-3d-quiver-plot-in-matplotlib
+        """
+        segments = (X, Y, Z, X + u, Y + v, Z + w)
+        segments = np.array(segments).reshape(6,-1)
+        return [[[x, y, z], [u, v, w]] for x, y, z, u, v, w in zip(*list(segments))]
+
+    @staticmethod
+    def update_arrows(t, lines_data, arrows_data, arrows):
+        for line_data, triple_arrow_data, triple_arrow in zip(lines_data, arrows_data, arrows):
+            x, y, z = AnimateXYZ.get_current(line_data, t)
+            for arrow, arrow_data in zip(triple_arrow, triple_arrow_data):
+                u, v, w = AnimateXYZ.get_current(arrow_data, t)
+                segments = AnimateXYZ.arrows_data_to_segments(x, y, z, u, v, w)
+                arrow.set_segments(segments)
+        return arrows
+
+    @staticmethod
+    def get_current(data, t):
+        x, y, z = data[0, t:t + 1], data[1, t:t + 1], data[2, t:t + 1]
+        return x, y, z
+
+    @staticmethod
+    def create_3d():
+        # Attaching 3D axis to the figure
+        fig = plt.figure()
+        ax = p3.Axes3D(fig)
+        return fig, ax
+
+    def set_ax(self, x_interval, y_interval, z_interval):
+        self.ax.set_xlim3d(x_interval)
+        self.ax.set_xlabel('X')
+
+        self.ax.set_ylim3d(y_interval)
+        self.ax.set_ylabel('Y')
+
+        self.ax.set_zlim3d(z_interval)
+        self.ax.set_zlabel('Z')
+
+    def plot_lines(self):
+        self.lines = []
+        for line_data in self.lines_data:
+            x, y, z = self.get_current(line_data, 0)
+            self.lines.append(self.ax.plot(x, y, z)[0])
+
+    def plot_arrows(self):
+        if self.arrows_data:
+            self.arrows = []
+            for line_data, triple_arrow_data in zip(self.lines_data, self.arrows_data):
+                triple_arrows = []
+                for arrow_data, color in zip(triple_arrow_data, self.COLORS):
+                    x, y, z = self.get_current(line_data, 0)
+                    u, v, w = self.get_current(arrow_data, 0)
+                    triple_arrows.append(
+                        self.ax.quiver(x, y, z, u, v, w, color=color, length=1, normalize=True))
+                self.arrows.append(triple_arrows)
+
+    def create_animation(self):
+        self.ani = animation.FuncAnimation(
+            self.fig,
+            self.update_lines_and_arrows,
+            self.num_frames,
+            fargs=(self.lines_data, self.lines, self.arrows_data, self.arrows),
+            interval=self.DEFAULT_INTERVAL,
+            blit=False
+        )
+
+    def show(self):
+        plt.show()
+
+    def save(self):
+        Writer = animation.writers['ffmpeg']
+        writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
+        self.ani.save('output.gif', writer=writer)
