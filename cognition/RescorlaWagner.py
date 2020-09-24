@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 
 from copy import deepcopy
 
+np.random.seed(1234)
+
 
 OUTPUT_DIR = "output/"
 
@@ -34,12 +36,14 @@ class RescorlaWagner:
             self.association_strengths = association_strengths
 
     class Reinforcement:
-        def __init__(self, stimuli: np.ndarray):
+        def __init__(self, conditioned: np.ndarray, unconditioned: np.ndarray):
             """
-            stimuli: np.ndarray
-                A (n,)-shaped vector of bools representing stimuli present.
+            conditioned: np.ndarray
+                A (n,)-shaped vector of bools representing the conditioned stimuli present.
+            unconditioned: np.ndarray
+                A (n,)-shaped vector of bools representing the unconditioned stimuli present.
             """
-            self.stimuli = stimuli
+            self.conditioned, self.unconditioned = conditioned, unconditioned
 
     def __init__(self,
         initial_saliences: np.ndarray=None,
@@ -159,23 +163,45 @@ class RescorlaWagner:
         new_uncertainties = deepcopy(state.uncertainties)
         new_association_strengths = deepcopy(state.association_strengths)
 
-        r = reinforcement.stimuli
+        r = reinforcement.unconditioned
+        c = reinforcement.conditioned
         n = r.shape[0]
         s = state.saliences
         a = state.association_strengths
         u = state.uncertainties
 
-        # This is the start of the update rule
+        # This is the start of the update rule-----------------------------------------------------
 
         total_association = np.sum(a, axis=0) - np.diagonal(a)
-        p = np.tile(r, (n, 1)).T
-        saliences = np.outer(s, s)
+
+        # Calculate new_association_strengths
+        for to_condition in np.ravel(np.argwhere(c)):
+            for condition_on in np.ravel(np.argwhere(r)):
+                new_association_strengths[to_condition][condition_on] += \
+                    self.learning_rate * s[to_condition] * s[condition_on] * (r[condition_on] - total_association[condition_on])
+
+        for to_condition in np.ravel(np.argwhere(c)):
+            for condition_on in np.ravel(np.argwhere(r)):
+                factor = a[to_condition][condition_on]
+                d = a[condition_on] - a[to_condition]
+                d[d < 0] = 0
+                to_add = self.learning_rate * factor * d
+                to_add[to_condition] = 0
+                to_add[condition_on] = 0
+                new_association_strengths[to_condition, :] += to_add
+        new_association_strengths = np.maximum(a, new_association_strengths)
+
+        # Calculate new_uncertainties
         d = r - state.association_strengths
+        mask_self = (np.ones((n, n)) - np.eye(n))
 
-        new_association_strengths += p * self.learning_rate * saliences * (r - total_association)
-        new_uncertainties += self.learning_rate * (np.abs(d) - u)
+        new_uncertainties += mask_self * self.learning_rate * (np.abs(d) - u)
 
-        # This is the end of the update rule
+        # Calculate new_saliences
+        if not np.any(r):
+            new_saliences += (1 - np.exp(-1 * self.learning_rate)) * ((1 - c) - s)
+
+        # This is the end of the update rule-------------------------------------------------------
 
         new_state = self.State(new_saliences, new_uncertainties, new_association_strengths)
 
@@ -183,13 +209,22 @@ class RescorlaWagner:
 
     # Plotting ------------------------------------------------------------------------------------
 
-    def plot(self, item1: int, item2: int, save=True, fig=None, ax=None):
+    def plot(self, item1: int, item2: int, save=True, fig=None, ax=None, parameter=None):
         """
         Plots the current history of item1 conditioned on item2.
         """
         if fig is None or ax is None:
             fig, ax = plt.subplots()
-        association_strengths = self.get_product(self.history, item1, item2)
+
+        parameter_fn = None
+        if parameter == "uncertainties":
+            parameter_fn = self.get_uncertainties
+        elif parameter == "association_strengths":
+            parameter_fn = self.get_association_strengths
+        else:
+            parameter_fn = self.get_product
+
+        association_strengths = parameter_fn(self.history, item1, item2)
         ax.plot(association_strengths)
         ax.set_ylim(0, 1.05)
         ax.set_xlabel("Time step")
@@ -225,16 +260,18 @@ class RescorlaWagner:
         """
         A convenience method to run all of the `demonstrate_*` methods.
         """
-        self.demonstrate_acquisition()
-        self.demonstrate_extinction()
-        self.demonstrate_overshadowing()
-        self.demonstrate_blocking()
-        self.demonstrate_spontaneous_recovery()
-        self.demonstrate_history_of_extinction()
-        self.demonstrate_second_order()
-        self.demonstrate_preexposure()
+        fig, axs = plt.subplots(2, 4, figsize=(35, 15))
+        self.demonstrate_acquisition(fig, axs[0, 0])
+        self.demonstrate_extinction(fig, axs[0, 1])
+        self.demonstrate_overshadowing(fig, axs[0, 2])
+        self.demonstrate_blocking(fig, axs[0, 3])
+        self.demonstrate_spontaneous_recovery(fig, axs[1, 0])
+        self.demonstrate_history_of_extinction(fig, axs[1, 1])
+        self.demonstrate_second_order(fig, axs[1, 2])
+        self.demonstrate_preexposure(fig, axs[1, 3])
+        fig.savefig(f"{OUTPUT_DIR}RW_demonstration.png")
 
-    def demonstrate_acquisition(self):
+    def demonstrate_acquisition(self, fig=None, ax=None):
         """
         Description: repeated pairings of a conditioned stimulus with an unconditioned stimulus
         increases their association strength.
@@ -249,19 +286,19 @@ class RescorlaWagner:
         """
         self.initialize(initialize_default=True)
 
-        stimuli = np.array([1, 1])
-        reinforcement = self.Reinforcement(stimuli)
+        conditioned = np.array([1, 0])
+        unconditioned = np.array([0, 1])
+        reinforcement = self.Reinforcement(conditioned, unconditioned)
 
         reinforcements = [reinforcement] * self.DEFAULT_NUM_TRIALS
 
         self.run_trials(reinforcements)
 
         cs, us = 0, 1
-        fig, ax = self.plot(cs, us, save=False)
+        fig, ax = self.plot(cs, us, save=False, fig=fig, ax=ax)
         ax.set_title(f"Acquisition of item {cs} conditioned on item {us}")
-        fig.savefig(f"{OUTPUT_DIR}acquisition.png")
 
-    def demonstrate_extinction(self):
+    def demonstrate_extinction(self, fig=None, ax=None):
         """
         Description: repeated trials of a conditioned stimulus without the unconditioned
         stimulus after the two have been paired results in decreases in their association strength.
@@ -282,19 +319,19 @@ class RescorlaWagner:
             initialize_default=True,
         )
 
-        stimuli = np.array([1, 0])
-        reinforcement = self.Reinforcement(stimuli)
+        conditioned = np.array([1, 0])
+        unconditioned = np.array([0, 0])
+        reinforcement = self.Reinforcement(conditioned, unconditioned)
 
         reinforcements = [reinforcement] * self.DEFAULT_NUM_TRIALS
 
         self.run_trials(reinforcements)
 
         cs, us = 0, 1
-        fig, ax = self.plot(cs, us, save=False)
+        fig, ax = self.plot(cs, us, save=False, fig=fig, ax=ax)
         ax.set_title(f"Extinction of item {cs} conditioned on item {us}")
-        fig.savefig(f"{OUTPUT_DIR}extinction.png")
 
-    def demonstrate_overshadowing(self):
+    def demonstrate_overshadowing(self, fig=None, ax=None):
         """
         Description: the growth in association strength are different for different US.
 
@@ -321,24 +358,24 @@ class RescorlaWagner:
             initialize_default=True,
         )
 
-        stimuli = np.array([1, 1, 1])
-        reinforcement = self.Reinforcement(stimuli)
+        conditioned = np.array([1, 1, 0])
+        unconditioned = np.array([0, 0, 1])
+        reinforcement = self.Reinforcement(conditioned, unconditioned)
 
         reinforcements = [reinforcement] * self.DEFAULT_NUM_TRIALS
 
         self.run_trials(reinforcements)
 
         cs1, cs2, us = 0, 1, 2
-        fig, ax = self.plot(cs1, us, save=False)
+        fig, ax = self.plot(cs1, us, save=False, fig=fig, ax=ax)
         fig, ax = self.plot(cs2, us, save=False, fig=fig, ax=ax)
         ax.set_title(f"Overshadowing of item {cs2} by item {cs1}")
         ax.legend([
             f"Association strength of item {cs1} conditioned on item {us}",
             f"Association strength of item {cs2} conditioned on item {us}",
         ])
-        fig.savefig(f"{OUTPUT_DIR}overshadowing.png")
 
-    def demonstrate_blocking(self):
+    def demonstrate_blocking(self, fig=None, ax=None):
         """
         Description: presenting an non-paired conditioned stimulus while simultaneously presenting
         a paired conditioned stimulus results in the non-paired CS having lower association
@@ -368,12 +405,14 @@ class RescorlaWagner:
             initialize_default=True,
         )
 
-        stimuli1 = np.array([1, 0, 1])
-        reinforcement1 = self.Reinforcement(stimuli1)
+        conditioned1 = np.array([1, 0, 0])
+        unconditioned1 = np.array([0, 0, 1])
+        reinforcement1 = self.Reinforcement(conditioned1, unconditioned1)
         reinforcements1 = [reinforcement1] * int(self.DEFAULT_NUM_TRIALS * 0.2)
 
-        stimuli2 = np.array([1, 1, 1])
-        reinforcement2 = self.Reinforcement(stimuli2)
+        conditioned2 = np.array([1, 1, 0])
+        unconditioned2 = np.array([0, 0, 1])
+        reinforcement2 = self.Reinforcement(conditioned2, unconditioned2)
         reinforcements2 = [reinforcement2] * int(self.DEFAULT_NUM_TRIALS * 0.8)
 
         reinforcements = reinforcements1 + reinforcements2
@@ -381,16 +420,15 @@ class RescorlaWagner:
         self.run_trials(reinforcements)
 
         cs1, cs2, us = 0, 1, 2
-        fig, ax = self.plot(cs1, us, save=False)
+        fig, ax = self.plot(cs1, us, save=False, fig=fig, ax=ax)
         fig, ax = self.plot(cs2, us, save=False, fig=fig, ax=ax)
         ax.set_title(f"Blocking of item {cs2} by item {cs1}")
         ax.legend([
             f"Association strength of item {cs1} conditioned on item {us}",
             f"Association strength of item {cs2} conditioned on item {us}",
         ])
-        fig.savefig(f"{OUTPUT_DIR}blocking.png")
 
-    def demonstrate_spontaneous_recovery(self):
+    def demonstrate_spontaneous_recovery(self, fig=None, ax=None):
         """
         Description: after extinction, conditioning comes back.
 
@@ -406,28 +444,30 @@ class RescorlaWagner:
         """
         self.initialize(initialize_default=True)
 
-        stimuli1 = np.array([1, 1])
-        reinforcement1 = self.Reinforcement(stimuli1)
-        reinforcements1 = [reinforcement1] * int(self.DEFAULT_NUM_TRIALS * 0.2)
+        conditioned1 = np.array([1, 0])
+        unconditioned1 = np.array([0, 1])
+        reinforcement1 = self.Reinforcement(conditioned1, unconditioned1)
+        reinforcements1 = [reinforcement1] * int(self.DEFAULT_NUM_TRIALS * 0.5)
 
-        stimuli2 = np.array([1, 0])
-        reinforcement2 = self.Reinforcement(stimuli2)
-        reinforcements2 = [reinforcement2] * int(self.DEFAULT_NUM_TRIALS * 0.3)
+        conditioned2 = np.array([1, 0])
+        unconditioned2 = np.array([0, 0])
+        reinforcement2 = self.Reinforcement(conditioned2, unconditioned2)
+        reinforcements2 = [reinforcement2] * int(self.DEFAULT_NUM_TRIALS * 0.2)
 
-        stimuli3 = np.array([0, 0])
-        reinforcement3 = self.Reinforcement(stimuli3)
-        reinforcements3 = [reinforcement3] * int(self.DEFAULT_NUM_TRIALS * 0.5)
+        conditioned3 = np.array([0, 0])
+        unconditioned3 = np.array([0, 0])
+        reinforcement3 = self.Reinforcement(conditioned3, unconditioned3)
+        reinforcements3 = [reinforcement3] * int(self.DEFAULT_NUM_TRIALS * 0.6)
 
-        reinforcements = reinforcements1 + reinforcements2 + reinforcements3
+        reinforcements = reinforcements1 + reinforcements2 + reinforcements3 + reinforcements2
 
         self.run_trials(reinforcements)
 
         cs, us = 0, 1
-        fig, ax = self.plot(cs, us, save=False)
+        fig, ax = self.plot(cs, us, save=False, fig=fig, ax=ax)
         ax.set_title(f"Spontaneous recovery of item {cs} conditioned on item {us}")
-        fig.savefig(f"{OUTPUT_DIR}spontaneous_recovery.png")
 
-    def demonstrate_history_of_extinction(self):
+    def demonstrate_history_of_extinction(self, fig=None, ax=None):
         """
         Description: extinct stimuli are learned faster.
 
@@ -441,14 +481,16 @@ class RescorlaWagner:
         but much "faster" than the initial pairing.
 
         """
-        self.initialize(initialize_default=True)
+        self.initialize(learning_rate=0.3, initialize_default=True)
 
-        stimuli1 = np.array([1, 1])
-        reinforcement1 = self.Reinforcement(stimuli1)
+        conditioned1 = np.array([1, 0])
+        unconditioned1 = np.array([0, 1])
+        reinforcement1 = self.Reinforcement(conditioned1, unconditioned1)
         reinforcements1 = [reinforcement1] * int(self.DEFAULT_NUM_TRIALS * 0.3)
 
-        stimuli2 = np.array([1, 0])
-        reinforcement2 = self.Reinforcement(stimuli2)
+        conditioned2 = np.array([1, 0])
+        unconditioned2 = np.array([0, 0])
+        reinforcement2 = self.Reinforcement(conditioned2, unconditioned2)
         reinforcements2 = [reinforcement2] * int(self.DEFAULT_NUM_TRIALS * 0.4)
 
         reinforcements = reinforcements1 + reinforcements2 + reinforcements1
@@ -456,11 +498,10 @@ class RescorlaWagner:
         self.run_trials(reinforcements)
 
         cs, us = 0, 1
-        fig, ax = self.plot(cs, us, save=False)
+        fig, ax = self.plot(cs, us, save=False, fig=fig, ax=ax)
         ax.set_title(f"History of extinction of item {cs} conditioned on item {us}")
-        fig.savefig(f"{OUTPUT_DIR}history_of_extinction.png")
 
-    def demonstrate_second_order(self):
+    def demonstrate_second_order(self, fig=None, ax=None):
         """
         Description: pairing a CS with an already paired CS results in the current CS also
         producing the US.
@@ -489,19 +530,19 @@ class RescorlaWagner:
             initialize_default=True,
         )
 
-        stimuli = np.array([1, 1, 0])
-        reinforcement = self.Reinforcement(stimuli)
+        conditioned = np.array([0, 1, 0])
+        unconditioned = np.array([1, 0, 0])
+        reinforcement = self.Reinforcement(conditioned, unconditioned)
         reinforcements = [reinforcement] * self.DEFAULT_NUM_TRIALS
 
         self.run_trials(reinforcements)
 
         cs1, cs2, us = 0, 1, 2
-        fig, ax = self.plot(cs1, us, save=False)
-        fig, ax = self.plot(cs2, us, save=False, fig=fig, ax=ax)
+        fig, ax = self.plot(cs1, us, save=False, fig=fig, ax=ax, parameter="association_strengths")
+        fig, ax = self.plot(cs2, us, save=False, fig=fig, ax=ax, parameter="association_strengths")
         ax.set_title(f"Second order condition of item {cs2} on item {us} through item {cs1}")
-        fig.savefig(f"{OUTPUT_DIR}second_order.png")
 
-    def demonstrate_preexposure(self):
+    def demonstrate_preexposure(self, fig=None, ax=None):
         """
         Description: pre-exposure to a particular CS without presenting the US results in less
         conditioning.
@@ -517,32 +558,31 @@ class RescorlaWagner:
         """
         self.initialize(initialize_default=True)
 
-        stimuli1 = np.array([1, 0])
-        reinforcement1 = self.Reinforcement(stimuli1)
-        reinforcements1 = [reinforcement1] * int(self.DEFAULT_NUM_TRIALS * 0.5)
+        conditioned1 = np.array([1, 0])
+        unconditioned1 = np.array([0, 0])
+        reinforcement1 = self.Reinforcement(conditioned1, unconditioned1)
+        reinforcements1 = [reinforcement1] * int(self.DEFAULT_NUM_TRIALS * 0.1)
 
-        stimuli2 = np.array([1, 1])
-        reinforcement2 = self.Reinforcement(stimuli2)
-        reinforcements2 = [reinforcement2] * int(self.DEFAULT_NUM_TRIALS * 0.5)
+        conditioned2 = np.array([1, 0])
+        unconditioned2 = np.array([0, 1])
+        reinforcement2 = self.Reinforcement(conditioned2, unconditioned2)
+        reinforcements2 = [reinforcement2] * int(self.DEFAULT_NUM_TRIALS * 0.9)
 
         reinforcements = reinforcements1 + reinforcements2
 
         self.run_trials(reinforcements)
 
         cs, us = 0, 1
-        fig, ax = self.plot(cs, us, save=False)
+        fig, ax = self.plot(cs, us, save=False, fig=fig, ax=ax)
 
         self.initialize(initialize_default=True)
 
-        stimuli1 = np.array([0, 0])
-        reinforcement1 = self.Reinforcement(stimuli1)
-        reinforcements1 = [reinforcement1] * int(self.DEFAULT_NUM_TRIALS * 0.5)
+        conditioned3 = np.array([0, 0])
+        unconditioned3 = np.array([0, 0])
+        reinforcement3 = self.Reinforcement(conditioned3, unconditioned3)
+        reinforcements3 = [reinforcement3] * int(self.DEFAULT_NUM_TRIALS * 0.1)
 
-        stimuli2 = np.array([1, 1])
-        reinforcement2 = self.Reinforcement(stimuli2)
-        reinforcements2 = [reinforcement2] * int(self.DEFAULT_NUM_TRIALS * 0.5)
-
-        reinforcements = reinforcements1 + reinforcements2
+        reinforcements = reinforcements3 + reinforcements2
 
         self.run_trials(reinforcements)
 
@@ -552,7 +592,6 @@ class RescorlaWagner:
             "Control",
         ])
         ax.set_title(f"Pre-exposure of item {cs} conditioned on item {us}")
-        fig.savefig(f"{OUTPUT_DIR}preexposure.png")
 
 
 if __name__ == "__main__":
