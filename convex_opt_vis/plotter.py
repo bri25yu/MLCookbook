@@ -8,6 +8,7 @@ import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.pyplot as plt
 
 
@@ -104,15 +105,29 @@ class Plotter3D:
 
         meshgrid2d: npt.MeshGrid2D = np.reshape(meshgrid, (2, -1))
 
-        X = meshgrid[0]
-        Y = meshgrid[1]
+        # Plot function
+        X, Y = meshgrid
         Z = f(meshgrid2d)
 
-        Z = np.reshape(Z, (X.shape[0], X.shape[1]))
+        Z = np.reshape(Z, X.shape)
 
         ax.plot_surface(
             X, Y, Z, rstride=1, cstride=1, edgecolor="none"
         )
+
+        # Plot gradients
+        normal_vectors = f.df(meshgrid2d)
+        normal_vectors = normal_vectors.reshape((2, *X.shape))
+
+        dX, dY = normal_vectors
+        dZ = -np.ones(dX.shape)
+
+        mask = np.ones(dX.shape)
+        mask[::10, ::10] = 0
+
+        quiver_args = (X, Y, Z, dX, dY, dZ)
+        mask_arg = lambda a: np.ma.masked_where(mask, a)
+        ax.quiver(*map(mask_arg, quiver_args))
 
     def get_ax(self) -> Union[Axes, None]:
         return self.ax
