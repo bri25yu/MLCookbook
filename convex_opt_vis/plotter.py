@@ -1,4 +1,4 @@
-from typing import Callable, Literal, Tuple, Union
+from typing import Callable, Iterable, Literal, NamedTuple, Tuple, Union
 
 from dataclasses import dataclass
 
@@ -8,7 +8,6 @@ import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.pyplot as plt
 
 
@@ -16,11 +15,14 @@ import matplotlib.pyplot as plt
 class npt:
     NDArray = NDArray
     Two = Literal[2]
+    Three = Literal[3]
     Len = int
     Shape = Tuple
     NDArray1D = NDArray[Shape[Len]]
     MeshGrid = NDArray[Shape[Two, Len, Len]]
+    Grid = NDArray[Shape[Len, Len]]
     MeshGrid2D = NDArray[Shape[Two, Len]]
+    MeshGrid3D = NDArray[Shape[Three, Len]]
 
 
 @dataclass
@@ -32,6 +34,21 @@ class Plotter3DArgs:
     n_partitions: int
 
     use_latex: bool
+
+
+class PlotinequalityInfo(NamedTuple):
+    Z: npt.Grid
+    dX: npt.Grid = None
+    dY: npt.Grid = None
+    dZ: npt.Grid = None
+
+
+class PlotinequalityInfoWithMask(NamedTuple):
+    Z: npt.Grid
+    dX: npt.Grid = None
+    dY: npt.Grid = None
+    dZ: npt.Grid = None
+    mask: npt.Grid = None
 
 
 class Plotter3D:
@@ -94,40 +111,119 @@ class Plotter3D:
         fig.tight_layout()
         plt.show()
 
-    def plot_function(
-        self, f: Callable[[npt.MeshGrid2D], npt.NDArray1D]
+    def plot_inequality(
+        self, inequality: Callable[[npt.MeshGrid2D], npt.NDArray1D]
     ) -> None:
         if not self.is_initialized:
             self.initialize()
 
-        meshgrid = self.meshgrid
+        plot_inequality_info = self.get_plot_inequality_info(inequality)
+        self.plot_surface(*plot_inequality_info)
+
+    def plot_intersection_of_inequalities(
+        self, inequalities: Iterable[Callable[[npt.MeshGrid2D], npt.NDArray1D]]
+    ) -> None:
+        if not self.is_initialized:
+            self.initialize()
+
+        inequalities_info = list(map(self.get_plot_inequality_info, inequalities))
+
+        # Augment inequalities info with masks
+        create_mask = lambda f: np.zeros(f[0].shape, dtype=bool)
+        augment_with_mask = lambda f: PlotinequalityInfoWithMask(*f, create_mask(f))
+        inequalities_info = list(map(augment_with_mask, inequalities_info))
+
+        # Get masks by intersection
+        def mask_f1_with_f2(
+            f1: PlotinequalityInfoWithMask, f2: PlotinequalityInfoWithMask
+        ) -> PlotinequalityInfoWithMask:
+            f1_mask = f1.mask
+            f1_Z = f1.Z
+            f2_Z = f2.Z
+            f2_dZ = f2.dZ
+
+            compare_op = np.less if f2_dZ[0][0] > 0 else np.greater
+
+            f1_compared_to_f2 = compare_op(f1_Z, f2_Z)
+            f1_mask = f1_mask | f1_compared_to_f2
+
+            new_f1 = PlotinequalityInfoWithMask(*f1[:-1], f1_mask)
+
+            return new_f1
+
+        for f1_idx in range(len(inequalities_info)):
+            f1 = inequalities_info[f1_idx]
+            for f2_idx in range(len(inequalities_info)):
+                if f1_idx == f2_idx: continue
+
+                f2 = inequalities_info[f2_idx]
+
+                f1 = mask_f1_with_f2(f1, f2)
+
+            inequalities_info[f1_idx] = f1
+
+        # Apply masks
+        apply_mask = lambda f: PlotinequalityInfo(*self.apply_mask(f[:-1], f.mask))
+        inequalities_info = list(map(apply_mask, inequalities_info))
+
+        # Plot inequalities
+        list(map(self.plot_surface, inequalities_info))
+
+    def plot_surface(
+        self, plot_inequality_info: PlotinequalityInfo
+    ) -> None:
         ax = self.ax
+        meshgrid = self.meshgrid
 
-        meshgrid2d: npt.MeshGrid2D = np.reshape(meshgrid, (2, -1))
+        Z, dX, dY, dZ = plot_inequality_info
 
-        # Plot function
+        # Plot inequality
         X, Y = meshgrid
-        Z = f(meshgrid2d)
-
-        Z = np.reshape(Z, X.shape)
-
         ax.plot_surface(
             X, Y, Z, rstride=1, cstride=1, edgecolor="none"
         )
 
-        # Plot gradients
-        normal_vectors = f.df(meshgrid2d)
-        normal_vectors = normal_vectors.reshape((2, *X.shape))
+        # Plot normal vectors
+        not_none = lambda o: o is not None
+        if all(map(not_none, (dX, dY, dZ))):
+            quiver_args = (X, Y, Z, dX, dY, dZ)
+            ax.quiver(*self.apply_downsample_mask(*quiver_args))
 
-        dX, dY = normal_vectors
-        dZ = -np.ones(dX.shape)
+    def apply_downsample_mask(self, *args: Iterable[npt.Grid]) -> Tuple[npt.Grid]:
+        """
+        All args must be the same shape
+        """
+        shape = args[0].shape
 
-        mask = np.ones(dX.shape)
+        mask = np.ones(shape)
         mask[::10, ::10] = 0
 
-        quiver_args = (X, Y, Z, dX, dY, dZ)
-        mask_arg = lambda a: np.ma.masked_where(mask, a)
-        ax.quiver(*map(mask_arg, quiver_args))
+        return self.apply_mask(args, mask)
+
+    def apply_mask(self, grids: Iterable[npt.Grid], mask: npt.Grid) -> Tuple[npt.Grid]:
+        mask_grid = lambda grid: np.ma.masked_where(mask, grid)
+        return tuple(map(mask_grid, grids))
+
+    def get_plot_inequality_info(
+        self, f: Callable[[npt.MeshGrid2D], npt.NDArray1D]
+    ) -> PlotinequalityInfo:
+        """
+        Returns a tuple of (Z, dX, dY, dZ)
+        """
+        meshgrid = self.meshgrid
+
+        original_shape = meshgrid[0].shape
+        meshgrid2d: npt.MeshGrid2D = np.reshape(meshgrid, (2, -1))
+
+        # inequality
+        Z = f(meshgrid2d)
+        Z = np.reshape(Z, original_shape)
+
+        # Normal vectors
+        normal_vectors = f.df(meshgrid2d)
+        normal_vectors = normal_vectors.reshape((3, *original_shape))
+
+        return PlotinequalityInfo(Z, *normal_vectors)
 
     def get_ax(self) -> Union[Axes, None]:
         return self.ax
