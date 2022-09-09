@@ -14,10 +14,14 @@ import matplotlib.pyplot as plt
 # Define a few numpy typing (npt) hints
 class npt:
     NDArray = NDArray
+    One = Literal[1]
     Two = Literal[2]
     Three = Literal[3]
     Len = int
     Shape = Tuple
+    Matrix2D = NDArray[Shape[Two, Two]]
+    Vector2D = NDArray[Shape[One, Two]]
+    Scalar2D = NDArray[Shape[One, One]]
     NDArray1D = NDArray[Shape[Len]]
     MeshGrid = NDArray[Shape[Two, Len, Len]]
     Grid = NDArray[Shape[Len, Len]]
