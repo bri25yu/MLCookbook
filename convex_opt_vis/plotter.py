@@ -1,8 +1,9 @@
-from typing import Callable, Iterable, Literal, NamedTuple, Tuple, Union
+from typing import Iterable, NamedTuple, Tuple, Union
+
+from functools import reduce
 
 from dataclasses import dataclass
 
-from numpy.typing import NDArray
 import numpy as np
 
 from matplotlib.figure import Figure
@@ -10,87 +11,48 @@ from matplotlib.axes import Axes
 
 import matplotlib.pyplot as plt
 
-
-# Define a few numpy typing (npt) hints
-class npt:
-    NDArray = NDArray
-    One = Literal[1]
-    Two = Literal[2]
-    Three = Literal[3]
-    Len = int
-    Shape = Tuple
-    Matrix2D = NDArray[Shape[Two, Two]]
-    Vector2D = NDArray[Shape[One, Two]]
-    Scalar2D = NDArray[Shape[One, One]]
-    NDArray1D = NDArray[Shape[Len]]
-    MeshGrid = NDArray[Shape[Two, Len, Len]]
-    Grid = NDArray[Shape[Len, Len]]
-    MeshGrid2D = NDArray[Shape[Two, Len]]
-    MeshGrid3D = NDArray[Shape[Three, Len]]
+from convex_opt_vis.typing import npt
+from convex_opt_vis.inequalities import AbstractInequality
 
 
 @dataclass
 class Plotter3DArgs:
-    x_1_min: float
-    x_1_max: float
-    x_2_min: float
-    x_2_max: float
+    cube_halfwidth: float
     n_partitions: int
-
-    use_latex: bool
-
-
-class PlotinequalityInfo(NamedTuple):
-    Z: npt.Grid
-    dX: npt.Grid = None
-    dY: npt.Grid = None
-    dZ: npt.Grid = None
+    downsample_mask_interval: int = 5
 
 
-class PlotinequalityInfoWithMask(NamedTuple):
-    Z: npt.Grid
-    dX: npt.Grid = None
-    dY: npt.Grid = None
-    dZ: npt.Grid = None
-    mask: npt.Grid = None
+class PlotPolygonInfo(NamedTuple):
+    edge_mask: npt.Grid
+    interior_mask: npt.Grid
 
 
 class Plotter3D:
     def __init__(self, args: Plotter3DArgs):
-        # Setup LaTeX if necessary
-        use_latex = args.use_latex
-        if use_latex:
-            plt.rcParams["text.usetex"] = True
-
         # Setup our plotting meshgrid
-        # First, we retrieve relevant properties from our args
-        x_1_min = args.x_1_min
-        x_1_max = args.x_1_max
-        x_2_min = args.x_2_min
-        x_2_max = args.x_2_max
+        cube_halfwidth = args.cube_halfwidth
         n_partitions = args.n_partitions
+        start = -cube_halfwidth
+        end = cube_halfwidth
 
-        ranges = [
-            (x_1_min, x_1_max, n_partitions),
-            (x_2_min, x_2_max, n_partitions),
-        ]
-
-        # We get a grid of points
-        def create_axis_points(axis_min: float, axis_max: float, n_partitions: int) -> npt.NDArray1D:
-            return np.linspace(axis_min, axis_max, n_partitions)
-
-        points = [create_axis_points(*r) for r in ranges]
+        create_axis_points = lambda: np.linspace(start, end, n_partitions)
+        points = [create_axis_points() for _ in range(3)]
 
         # Create a meshgrid using our x and y points
         meshgrid: npt.MeshGrid = np.array(np.meshgrid(*points))
 
         # Store our input plotter args and meshgrid
         self.args = args
+        self.atol = 2 * cube_halfwidth / n_partitions
         self.meshgrid: npt.MeshGrid = meshgrid
 
         # Setup our plotting vars
         self.fig: Figure = None
         self.ax: Axes = None
+
+    # -------------------------------------------
+    # START plotter obj-related methods
+    # -------------------------------------------
 
     @property
     def is_initialized(self) -> bool:
@@ -99,9 +61,9 @@ class Plotter3D:
     def initialize(self):
         fig = plt.figure()
         ax = plt.axes(projection="3d")
-        ax.set_xlabel("x_1")
-        ax.set_ylabel("x_2")
-        ax.set_zlabel("f(x_1, x_2)")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_zlabel("z")
 
         self.fig = fig
         self.ax = ax
@@ -115,119 +77,113 @@ class Plotter3D:
         fig.tight_layout()
         plt.show()
 
-    def plot_inequality(
-        self, inequality: Callable[[npt.MeshGrid2D], npt.NDArray1D]
-    ) -> None:
+    def get_ax(self) -> Union[Axes, None]:
+        return self.ax
+
+    # -------------------------------------------
+    # START exposed plotting methods
+    # -------------------------------------------
+
+    def plot_inequality(self, inequality: AbstractInequality) -> None:
         if not self.is_initialized:
             self.initialize()
 
         plot_inequality_info = self.get_plot_inequality_info(inequality)
-        self.plot_surface(*plot_inequality_info)
+        self.plot_polygon(plot_inequality_info)
 
-    def plot_intersection_of_inequalities(
-        self, inequalities: Iterable[Callable[[npt.MeshGrid2D], npt.NDArray1D]]
-    ) -> None:
+    def plot_intersection_of_inequalities(self, inequalities: Iterable[AbstractInequality]) -> None:
         if not self.is_initialized:
             self.initialize()
 
         inequalities_info = list(map(self.get_plot_inequality_info, inequalities))
 
-        # Augment inequalities info with masks
-        create_mask = lambda f: np.zeros(f[0].shape, dtype=bool)
-        augment_with_mask = lambda f: PlotinequalityInfoWithMask(*f, create_mask(f))
-        inequalities_info = list(map(augment_with_mask, inequalities_info))
+        # Get plotting information
+        interior_mask = reduce(np.logical_or, map(lambda f: f.interior_mask, inequalities_info))
+        surface_masks = list(map(lambda f: f.edge_mask | interior_mask, inequalities_info))
 
-        # Get masks by intersection
-        def mask_f1_with_f2(
-            f1: PlotinequalityInfoWithMask, f2: PlotinequalityInfoWithMask
-        ) -> PlotinequalityInfoWithMask:
-            f1_mask = f1.mask
-            f1_Z = f1.Z
-            f2_Z = f2.Z
-            f2_dZ = f2.dZ
+        # Plot
+        self.plot_polygon_interior(interior_mask)
+        list(map(self.plot_polygon_surface, surface_masks))
 
-            compare_op = np.less if f2_dZ[0][0] > 0 else np.greater
+    # -------------------------------------------
+    # START plot_polygon related methods
+    # -------------------------------------------
 
-            f1_compared_to_f2 = compare_op(f1_Z, f2_Z)
-            f1_mask = f1_mask | f1_compared_to_f2
+    def plot_polygon(self, plot_polygon_info: PlotPolygonInfo) -> None:
+        edge_mask, interior_mask = plot_polygon_info
 
-            new_f1 = PlotinequalityInfoWithMask(*f1[:-1], f1_mask)
+        self.plot_polygon_surface(edge_mask)
+        self.plot_polygon_interior(interior_mask)
 
-            return new_f1
+    def get_plot_inequality_info(self, f: AbstractInequality) -> PlotPolygonInfo:
+        meshgrid = self.meshgrid
+        atol = self.atol
 
-        for f1_idx in range(len(inequalities_info)):
-            f1 = inequalities_info[f1_idx]
-            for f2_idx in range(len(inequalities_info)):
-                if f1_idx == f2_idx: continue
+        original_shape = meshgrid[0].shape
+        meshgrid3d: npt.MeshGrid3D = np.reshape(meshgrid, (3, -1))
 
-                f2 = inequalities_info[f2_idx]
+        output = f(meshgrid3d)
 
-                f1 = mask_f1_with_f2(f1, f2)
+        # Equality case for surface edges
+        offset = np.ones_like(output) * f.offset
+        edge_mask = ~np.isclose(output, offset, atol=atol)
 
-            inequalities_info[f1_idx] = f1
+        # Inequality case for interior points
+        # Invert the inequality for mask
+        interior_mask = ~(output <= f.offset)
 
-        # Apply masks
-        apply_mask = lambda f: PlotinequalityInfo(*self.apply_mask(f[:-1], f.mask))
-        inequalities_info = list(map(apply_mask, inequalities_info))
+        # Reshape both masks to original shape
+        edge_mask = np.reshape(edge_mask, original_shape)
+        interior_mask = np.reshape(interior_mask, original_shape)
 
-        # Plot inequalities
-        list(map(self.plot_surface, inequalities_info))
+        return PlotPolygonInfo(edge_mask, interior_mask)
 
-    def plot_surface(
-        self, plot_inequality_info: PlotinequalityInfo
-    ) -> None:
+    def plot_polygon_surface(self, edge_mask: npt.Grid) -> None:
         ax = self.ax
         meshgrid = self.meshgrid
 
-        Z, dX, dY, dZ = plot_inequality_info
+        X, Y, Z = meshgrid
 
-        # Plot inequality
-        X, Y = meshgrid
+        # Reshape 3d meshgrid to 2d to be usable by axes plotting
+        X_2d = X[0, :, :].T
+        Y_2d = Y[:, 0, :]
+
+        # Plot surface points using equality/edge mask
+        Z_surface_3d = self.apply_mask((Z,), edge_mask)[0]
+        Z_surface_2d = Z_surface_3d.mean(axis=2).round(2)
         ax.plot_surface(
-            X, Y, Z, rstride=1, cstride=1, edgecolor="none"
+            X_2d, Y_2d, Z_surface_2d, rstride=1, cstride=1, edgecolor="none"
         )
 
-        # Plot normal vectors
-        not_none = lambda o: o is not None
-        if all(map(not_none, (dX, dY, dZ))):
-            quiver_args = (X, Y, Z, dX, dY, dZ)
-            ax.quiver(*self.apply_downsample_mask(*quiver_args))
+    def plot_polygon_interior(self, interior_mask: npt.Grid) -> None:
+        ax = self.ax
+        meshgrid = self.meshgrid
+        downsample_mask = self.downsample_mask
 
-    def apply_downsample_mask(self, *args: Iterable[npt.Grid]) -> Tuple[npt.Grid]:
-        """
-        All args must be the same shape
-        """
-        shape = args[0].shape
+        # Plot interior points using inequality/interior mask
+        interior_mask_total = interior_mask | downsample_mask
+        meshgrid_interior = self.apply_mask(meshgrid, interior_mask_total)
+        ax.scatter(*meshgrid_interior)
 
-        mask = np.ones(shape)
-        mask[::10, ::10] = 0
+    # -------------------------------------------
+    # START masking helpers
+    # -------------------------------------------
 
-        return self.apply_mask(args, mask)
+    @property
+    def downsample_mask(self) -> npt.Grid:
+        meshgrid = self.meshgrid
+        downsample_mask_interval = self.args.downsample_mask_interval
+
+        shape = meshgrid[0].shape
+
+        slice_interval = slice(None, None, downsample_mask_interval)
+        mask_slices = [slice_interval] * len(shape)
+
+        mask = np.ones(shape, dtype=bool)
+        mask[mask_slices] = 0
+
+        return mask
 
     def apply_mask(self, grids: Iterable[npt.Grid], mask: npt.Grid) -> Tuple[npt.Grid]:
         mask_grid = lambda grid: np.ma.masked_where(mask, grid)
         return tuple(map(mask_grid, grids))
-
-    def get_plot_inequality_info(
-        self, f: Callable[[npt.MeshGrid2D], npt.NDArray1D]
-    ) -> PlotinequalityInfo:
-        """
-        Returns a tuple of (Z, dX, dY, dZ)
-        """
-        meshgrid = self.meshgrid
-
-        original_shape = meshgrid[0].shape
-        meshgrid2d: npt.MeshGrid2D = np.reshape(meshgrid, (2, -1))
-
-        # inequality
-        Z = f(meshgrid2d)
-        Z = np.reshape(Z, original_shape)
-
-        # Normal vectors
-        normal_vectors = f.df(meshgrid2d)
-        normal_vectors = normal_vectors.reshape((3, *original_shape))
-
-        return PlotinequalityInfo(Z, *normal_vectors)
-
-    def get_ax(self) -> Union[Axes, None]:
-        return self.ax
