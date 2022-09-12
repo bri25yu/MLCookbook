@@ -22,14 +22,13 @@ def main(shape: str):
     plotter = initialize_plotter()
     inequalities = get_inequalities(shape)
 
-    plotter.plot_inequality(inequalities[0])
-    # plotter.plot_intersection_of_inequalities(inequalities)
+    plotter.plot_intersection_of_inequalities(inequalities)
 
     plotter.show()
 
 
 def initialize_plotter() -> Plotter3D:
-    args = Plotter3DArgs(6, 50, 2)
+    args = Plotter3DArgs(6, 50, 5)
     plotter = Plotter3D(args)
     plotter.initialize()
 
@@ -37,6 +36,9 @@ def initialize_plotter() -> Plotter3D:
 
 
 INEQUALITY_OPTIONS = {
+    "plane": [
+        AffineInequality(1, np.array([[0, 0, 1]])),
+    ],
     "hexagon": [
         AffineInequality(1, np.array([[0, 0, 1]])),
         AffineInequality(1, np.array([[0, 0, -1]])),
@@ -45,14 +47,20 @@ INEQUALITY_OPTIONS = {
         AffineInequality(3, np.array([[0, -1, 1]])),
         AffineInequality(3, np.array([[0, -1, -1]])),
     ],
-    # "paraboloid": [
-        # AffineInequality(1, np.array([[0, 0, 1]])),
-    #     QuadraticInequality(5, np.eye(3), np.zeros((3, 1)), np.array([[0]])),
-    # ],
-    # "ellipsoid": [
-    #     AffineInequality(np.array([[0, 0]]), np.array([[10]]), -1),
-    #     QuadraticInequality(np.array([[1, 1], [0, 1]]), np.array([[0, 0]]), np.array([[0]]), 1),
-    # ],
+    "ellipsoid": [
+        QuadraticInequality(9, np.eye(3), np.zeros((3, 1)), np.array([[0]])),
+    ],
+    "ellipsoids": [
+        QuadraticInequality(
+            4, np.array([[2, 0, 0], [0, 1, 0], [0, 0, 1]]), np.zeros((3, 1)), np.array([[0]])
+        ),
+        QuadraticInequality(
+            4, np.array([[1, 0, 0], [0, 2, 0], [0, 0, 1]]), np.zeros((3, 1)), np.array([[0]])
+        ),
+        QuadraticInequality(
+            4, np.array([[1, 0, 0], [0, 1, 0], [0, 0, 2]]), np.zeros((3, 1)), np.array([[0]])
+        ),
+    ],
 }
 
 

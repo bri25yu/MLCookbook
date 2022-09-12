@@ -141,6 +141,7 @@ class Plotter3D:
     def plot_polygon_surface(self, edge_mask: npt.Grid) -> None:
         ax = self.ax
         meshgrid = self.meshgrid
+        atol = self.atol
 
         X, Y, Z = meshgrid
 
@@ -148,12 +149,28 @@ class Plotter3D:
         X_2d = X[0, :, :].T
         Y_2d = Y[:, 0, :]
 
-        # Plot surface points using equality/edge mask
+        # Apply edge mask
         Z_surface_3d = self.apply_mask((Z,), edge_mask)[0]
-        Z_surface_2d = Z_surface_3d.mean(axis=2).round(2)
-        ax.plot_surface(
-            X_2d, Y_2d, Z_surface_2d, rstride=1, cstride=1, edgecolor="none"
-        )
+
+        # We assume the object is a convex set
+        # Determine whether the surface needs two graphs to plot correctly
+        Z_surface_2d_max = Z_surface_3d.max(axis=2)
+        Z_surface_2d_min = Z_surface_3d.min(axis=2)
+        diff = Z_surface_2d_max - Z_surface_2d_min
+        needs_two_graphs = np.any(diff >= atol)
+
+        if needs_two_graphs:
+            ax.plot_surface(
+                X_2d, Y_2d, Z_surface_2d_max, rstride=1, cstride=1, edgecolor="none"
+            )
+            ax.plot_surface(
+                X_2d, Y_2d, Z_surface_2d_min, rstride=1, cstride=1, edgecolor="none"
+            )
+        else:
+            Z_surface_2d = Z_surface_3d.mean(axis=2)
+            ax.plot_surface(
+                X_2d, Y_2d, Z_surface_2d, rstride=1, cstride=1, edgecolor="none"
+            )
 
     def plot_polygon_interior(self, interior_mask: npt.Grid) -> None:
         ax = self.ax
